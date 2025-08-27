@@ -144,6 +144,11 @@ impl LogRotator {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     
+    // Check if help was requested - if so, exit immediately
+    if std::env::args().any(|arg| arg == "-h" || arg == "--help") {
+        return Ok(());
+    }
+    
     let mut rotator = LogRotator::new(&args.file, args.size, args.lines, args.count)?;
     
     if args.rotate {
