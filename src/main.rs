@@ -20,6 +20,10 @@ struct Args {
     #[arg(short, long, default_value = "1048576")]
     size: u64,
 
+    /// Maximum number of lines before rotation
+    #[arg(short, long)]
+    lines: Option<u64>,
+
     /// Number of rotated files to keep
     #[arg(short, long, default_value = "5")]
     count: usize,
@@ -32,13 +36,15 @@ struct Args {
 struct LogRotator {
     base_path: String,
     max_size: u64,
+    max_lines: Option<u64>,
     max_count: usize,
     current_file: Option<BufWriter<File>>,
     current_size: u64,
+    current_lines: u64,
 }
 
 impl LogRotator {
-    fn new(path: &str, max_size: u64, max_count: usize) -> anyhow::Result<Self> {
+    fn new(path: &str, max_size: u64, max_lines: Option<u64>, max_count: usize) -> anyhow::Result<Self> {
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -46,13 +52,28 @@ impl LogRotator {
         
         let metadata = file.metadata()?;
         let current_size = metadata.len();
+        
+        // Count existing lines
+        let mut current_lines = 0;
+        if current_size > 0 {
+            let mut reader = BufReader::new(File::open(path)?);
+            let mut buffer = Vec::new();
+            while reader.read_until(b'\n', &mut buffer)? > 0 {
+                if buffer.ends_with(b"\n") {
+                    current_lines += 1;
+                }
+                buffer.clear();
+            }
+        }
 
         Ok(Self {
             base_path: path.to_string(),
             max_size,
+            max_lines,
             max_count,
             current_file: Some(BufWriter::new(file)),
             current_size,
+            current_lines,
         })
     }
 
@@ -60,7 +81,11 @@ impl LogRotator {
         let line_bytes = line.as_bytes();
         let line_len = line_bytes.len() as u64;
 
-        if self.current_size + line_len > self.max_size {
+        // Check if rotation is needed
+        let size_exceeded = self.current_size + line_len > self.max_size;
+        let lines_exceeded = self.max_lines.map_or(false, |max| self.current_lines + 1 > max);
+
+        if size_exceeded || lines_exceeded {
             self.rotate()?;
         }
 
@@ -69,6 +94,7 @@ impl LogRotator {
             writer.write_all(b"\n")?;
             writer.flush()?;
             self.current_size += line_len + 1;
+            self.current_lines += 1;
         }
 
         Ok(())
@@ -109,6 +135,7 @@ impl LogRotator {
         
         self.current_file = Some(BufWriter::new(file));
         self.current_size = 0;
+        self.current_lines = 0;
 
         Ok(())
     }
@@ -117,7 +144,7 @@ impl LogRotator {
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     
-    let mut rotator = LogRotator::new(&args.file, args.size, args.count)?;
+    let mut rotator = LogRotator::new(&args.file, args.size, args.lines, args.count)?;
     
     if args.rotate {
         rotator.rotate()?;
