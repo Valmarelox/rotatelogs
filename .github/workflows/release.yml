@@ -1,0 +1,107 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run tests
+        run: cargo test --verbose
+
+  build:
+    name: Build for ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact-name: rotatelogs-x86_64-linux
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact-name: rotatelogs-x86_64-windows
+            ext: .exe
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact-name: rotatelogs-x86_64-macos
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact-name: rotatelogs-aarch64-macos
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+      - name: Create archive
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            powershell -Command "Compress-Archive -Path rotatelogs${{ matrix.ext }} -DestinationPath ../../../${{ matrix.artifact-name }}.zip -Force"
+          else
+            tar czf ../../../${{ matrix.artifact-name }}.tar.gz rotatelogs${{ matrix.ext }}
+          fi
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-name }}.*
+
+  release:
+    name: Create Release
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Get version from tag
+        id: tag_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          name: Release v${{ steps.tag_version.outputs.VERSION }}
+          body: |
+            Release v${{ steps.tag_version.outputs.VERSION }}
+            
+            ## Downloads
+            
+            - Linux (x86_64): `rotatelogs-x86_64-linux.tar.gz`
+            - macOS (x86_64): `rotatelogs-x86_64-macos.tar.gz`
+            - macOS (ARM64): `rotatelogs-aarch64-macos.tar.gz`
+            - Windows (x86_64): `rotatelogs-x86_64-windows.zip`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish to crates.io
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
