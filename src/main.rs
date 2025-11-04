@@ -80,21 +80,22 @@ impl LogRotator {
     fn write_line(&mut self, line: &str) -> anyhow::Result<()> {
         let line_bytes = line.as_bytes();
         let line_len = line_bytes.len() as u64;
-
-        // Check if rotation is needed
-        let size_exceeded = self.max_size > 0 && self.current_size + line_len > self.max_size;
-        let lines_exceeded = self.max_lines.map_or(false, |max| self.current_lines + 1 > max);
-
-        if size_exceeded || lines_exceeded {
-            self.rotate()?;
-        }
+        let line_with_newline_len = line_len + 1;
 
         if let Some(ref mut writer) = self.current_file {
             writer.write_all(line_bytes)?;
             writer.write_all(b"\n")?;
             writer.flush()?;
-            self.current_size += line_len + 1;
+            self.current_size += line_with_newline_len;
             self.current_lines += 1;
+        }
+
+        // Check if rotation is needed after writing this line
+        let size_exceeded = self.max_size > 0 && self.current_size > self.max_size;
+        let lines_exceeded = self.max_lines.is_some_and(|max| self.current_lines >= max);
+
+        if size_exceeded || lines_exceeded {
+            self.rotate()?;
         }
 
         Ok(())
@@ -132,24 +133,12 @@ impl LogRotator {
         // Copy current file to .1 and then truncate
         if Path::new(&self.base_path).exists() {
             let rotated_path = format!("{}.1", self.base_path);
-            println!("Copying {} to {}", self.base_path, rotated_path);
-            
-            // Debug: check content before copy
-            let content_before = fs::read_to_string(&self.base_path)?;
-            println!("Content before copy: {:?}", content_before);
-            
             fs::copy(&self.base_path, &rotated_path)?;
-            println!("Copy successful");
-            
-            // Debug: check content after copy
-            let content_after_copy = fs::read_to_string(&rotated_path)?;
-            println!("Content after copy: {:?}", content_after_copy);
             
             // Truncate the original file
             let file = OpenOptions::new().write(true).truncate(true).open(&self.base_path)?;
             file.set_len(0)?;
             drop(file);
-            println!("Truncate successful");
         }
 
         // Create new current file
