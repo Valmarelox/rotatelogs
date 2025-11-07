@@ -10,6 +10,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  fmt:
+    name: Check formatting
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
   test:
     name: Test
     runs-on: ${{ matrix.os }}
@@ -37,9 +50,6 @@ jobs:
         key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
         restore-keys: |
           ${{ runner.os }}-cargo-
-
-    - name: Check formatting
-      run: cargo fmt --all -- --check
 
     - name: Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
